@@ -3,10 +3,11 @@ require('dotenv').config();
 
 const URGENCY_EMOJI = { hot: '🔥', warm: '🌤️', cold: '🧊' };
 
-async function sendSlackAlert(visitorName, qualification) {
-  const { service, intent_summary, urgency, suggested_action } = qualification;
+async function sendSlackAlert(data) {
+  const { service, intent_summary, urgency, suggested_action, visitor_name } = data;
   const emoji = URGENCY_EMOJI[urgency] || '❓';
-  const label = urgency.toUpperCase();
+  const label = urgency ? urgency.toUpperCase() : 'UNKNOWN';
+  const visitorName = visitor_name || 'Unknown Visitor';
 
   const message = {
     blocks: [
@@ -42,7 +43,7 @@ async function sendSlackAlert(visitorName, qualification) {
 
   try {
     await axios.post(process.env.SLACK_WEBHOOK_URL, message);
-    console.log('Slack alert sent successfully.');
+    console.log('Slack alert sent successfully for visitor:', visitorName);
   } catch (err) {
     console.error('Slack error:', err.message);
     throw err;
