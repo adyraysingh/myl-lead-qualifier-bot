@@ -13,6 +13,10 @@ function addLead(lead) {
   });
 }
 
+function getTodaysLeads() {
+  return todaysLeads;
+}
+
 function buildDailySummary() {
   const today = new Date().toLocaleDateString('en-IN', {
     timeZone: 'Asia/Kolkata',
@@ -40,9 +44,9 @@ No leads detected today. Keep the conversations going!`
   let summary = `📊 *Daily Lead Summary — ${today}*
 
 `;
-  summary += `*Total Leads:* ${todaysLeads.length}  |  🔥 Hot: ${hotLeads.length}  |  🌤 Warm: ${warmLeads.length}  |  ❄️ Cold: ${coldLeads.length}
+  summary += `*Total Leads:* ${todaysLeads.length} | 🔥 Hot: ${hotLeads.length} | 🌤 Warm: ${warmLeads.length} | ❄️ Cold: ${coldLeads.length}
 `;
-  summary += `*By Service:* MYL: ${myl.length}  |  Retell AI: ${retell.length}
+  summary += `*By Service:* MYL: ${myl.length} | Retell AI: ${retell.length}
 
 `;
   summary += `*Lead Breakdown:*
@@ -53,9 +57,9 @@ No leads detected today. Keep the conversations going!`
     const time = new Date(lead.timestamp).toLocaleTimeString('en-IN', { timeZone: 'Asia/Kolkata', hour: '2-digit', minute: '2-digit' });
     summary += `${i + 1}. ${urgencyEmoji} [${lead.service}] ${lead.visitor_name || 'Unknown Visitor'} @ ${time}
 `;
-    summary += `   _${lead.intent_summary}_
+    summary += ` _${lead.intent_summary}_
 `;
-    summary += `   → ${lead.suggested_action}
+    summary += ` → ${lead.suggested_action}
 
 `;
   });
@@ -91,4 +95,4 @@ function startDailyCron() {
   console.log('[DailySummary] Daily summary cron scheduled for 6:00 PM IST');
 }
 
-module.exports = { addLead, sendDailySummary, startDailyCron };
+module.exports = { addLead, getTodaysLeads, buildDailySummary, sendDailySummary, startDailyCron };
