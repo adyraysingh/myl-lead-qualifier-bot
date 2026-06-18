@@ -1,59 +1,51 @@
+require('dotenv').config();
 const express = require('express');
 const { qualifyLead } = require('./qualifier');
 const { sendSlackAlert } = require('./slack');
-require('dotenv').config();
+const { addLead, startDailyCron } = require('./dailySummary');
 
 const app = express();
 app.use(express.json());
 
+const PORT = process.env.PORT || 3000;
+
 app.get('/', (req, res) => {
   res.send('MYL Lead Qualifier Bot is running.');
-  });
+});
 
-  app.post('/webhook', async (req, res) => {
-    console.log('Webhook received:', JSON.stringify(req.body, null, 2));
-      try {
-          const payload = req.body;
-              const visitorName =
-                    payload?.visitor?.name ||
-                          payload?.chat?.visitor?.name ||
-                                payload?.data?.visitor?.name ||
-                                      'Unknown Visitor';
-                                          let transcript = '';
-                                              const messages =
-                                                    payload?.chat?.messages ||
-                                                          payload?.data?.chat?.messages ||
-                                                                payload?.messages ||
-                                                                      null;
-                                                                          if (messages && Array.isArray(messages)) {
-                                                                                transcript = messages
-                                                                                        .map((m) => (m.sender || m.role || 'User') + ': ' + (m.text || m.message || ''))
-                                                                                                .join('\n');
-                                                                                                    } else {
-                                                                                                          transcript =
-                                                                                                                  payload?.chat?.transcript ||
-                                                                                                                          payload?.data?.transcript ||
-                                                                                                                                  payload?.transcript ||
-                                                                                                                                          JSON.stringify(payload);
-                                                                                                                                              }
-                                                                                                                                                  if (!transcript || transcript.trim().length === 0) {
-                                                                                                                                                        return res.status(200).json({ status: 'skipped', reason: 'empty transcript' });
-                                                                                                                                                            }
-                                                                                                                                                                const qualification = await qualifyLead(transcript);
-                                                                                                                                                                    console.log('Qualification result:', qualification);
-                                                                                                                                                                        if (qualification.is_lead && qualification.service !== 'none') {
-                                                                                                                                                                              await sendSlackAlert(visitorName, qualification);
-                                                                                                                                                                                    return res.status(200).json({ status: 'lead_detected', qualification });
-                                                                                                                                                                                        } else {
-                                                                                                                                                                                              return res.status(200).json({ status: 'not_a_lead', qualification });
-                                                                                                                                                                                                  }
-                                                                                                                                                                                                    } catch (err) {
-                                                                                                                                                                                                        console.error('Error processing webhook:', err.message);
-                                                                                                                                                                                                            return res.status(500).json({ status: 'error', message: err.message });
-                                                                                                                                                                                                              }
-                                                                                                                                                                                                              });
-                                                                                                                                                                                                              
-                                                                                                                                                                                                              const PORT = process.env.PORT || 3000;
-                                                                                                                                                                                                              app.listen(PORT, () => {
-                                                                                                                                                                                                                console.log('Lead Qualifier Bot listening on port ' + PORT);
-                                                                                                                                                                                                                });
+app.post('/webhook', async (req, res) => {
+  try {
+    const body = req.body;
+    console.log('[Webhook] Received:', JSON.stringify(body).substring(0, 200));
+
+    // Extract chat transcript from Zoho SalesIQ payload
+    const transcript = body.transcript || body.chat_transcript || body.message || JSON.stringify(body);
+    const visitorName = body.visitor?.name || body.visitor_name || 'Unknown Visitor';
+
+    // Qualify the lead using OpenAI
+    const result = await qualifyLead(transcript);
+    console.log('[Qualifier] Result:', JSON.stringify(result));
+
+    if (result.is_lead) {
+      // Send immediate alert to #globolosys-b2b-360-leads-and-meeting
+      await sendSlackAlert({ ...result, visitor_name: visitorName });
+      // Add to daily summary tracker
+      addLead({ ...result, visitor_name: visitorName });
+      console.log('[Bot] Lead detected and alert sent.');
+    } else {
+      console.log('[Bot] Not a lead, skipping alert.');
+    }
+
+    res.status(200).json({ success: true, result });
+  } catch (err) {
+    console.error('[Webhook] Error:', err.message);
+    res.status(500).json({ error: err.message });
+  }
+});
+
+// Start the daily cron job for summary
+startDailyCron();
+
+app.listen(PORT, () => {
+  console.log(`MYL Lead Qualifier Bot running on port ${PORT}`);
+});
