@@ -1,14 +1,15 @@
 {
-    "name": "myl-lead-qualifier-bot",
-    "version": "1.0.0",
-    "main": "index.js",
-    "scripts": {
-          "start": "node index.js"
-    },
-    "dependencies": {
-          "express": "^4.18.2",
-          "openai": "^4.47.1",
-          "axios": "^1.6.8",
-          "dotenv": "^16.4.5"
-    }
+  "name": "myl-lead-qualifier-bot",
+  "version": "1.0.0",
+  "main": "index.js",
+  "scripts": {
+    "start": "node index.js"
+  },
+  "dependencies": {
+    "express": "^4.18.2",
+    "openai": "^4.47.1",
+    "axios": "^1.6.8",
+    "dotenv": "^16.4.5",
+    "node-cron": "^3.0.3"
+  }
 }
