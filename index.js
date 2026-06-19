@@ -14,6 +14,42 @@ app.get('/', (req, res) => {
   res.send('MYL Lead Qualifier Bot is running.');
 });
 
+// WhatsApp Outbound via Meta API
+async function sendWhatsAppMessage(toPhone, visitorName) {
+  const token = process.env.WHATSAPP_ACCESS_TOKEN;
+  const phoneNumberId = process.env.WHATSAPP_PHONE_NUMBER_ID;
+  const templateName = process.env.WHATSAPP_TEMPLATE_NAME || 'hello_world';
+  if (!token || !phoneNumberId) {
+    console.log('[WhatsApp] Skipping - env vars not set');
+    return;
+  }
+  const phone = toPhone.replace(/[\s\-\(\)]/g, '').replace(/^\+/, '');
+  if (!phone || phone.length < 7) {
+    console.log('[WhatsApp] Skipping - invalid phone:', toPhone);
+    return;
+  }
+  try {
+    const payload = {
+      messaging_product: 'whatsapp',
+      to: phone,
+      type: 'template',
+      template: {
+        name: templateName,
+        language: { code: 'en_US' },
+        components: [{ type: 'body', parameters: [{ type: 'text', text: visitorName || 'there' }] }]
+      }
+    };
+    const response = await axios.post(
+      `https://graph.facebook.com/v19.0/${phoneNumberId}/messages`,
+      payload,
+      { headers: { Authorization: `Bearer ${token}`, 'Content-Type': 'application/json' } }
+    );
+    console.log('[WhatsApp] Sent to', phone, '| ID:', response.data?.messages?.[0]?.id);
+  } catch (err) {
+    console.error('[WhatsApp] Failed:', err.response?.data?.error?.message || err.message);
+  }
+}
+
 async function getSmartReply(userMsg, chats) {
   const OPENAI_API_KEY = process.env.OPENAI_API_KEY;
   if (!OPENAI_API_KEY) return null;
@@ -24,13 +60,8 @@ async function getSmartReply(userMsg, chats) {
   const hot = leads.filter(l => l.urgency === 'hot');
   const warm = leads.filter(l => l.urgency === 'warm');
   const chatData = {
-    total: chats.length,
-    active: active.length,
-    missed: missed.length,
-    closed: closed.length,
-    totalLeads: leads.length,
-    hotLeads: hot.length,
-    warmLeads: warm.length,
+    total: chats.length, active: active.length, missed: missed.length, closed: closed.length,
+    totalLeads: leads.length, hotLeads: hot.length, warmLeads: warm.length,
     potentialClients: leads.map(l => ({ name: l.visitor_name, email: l.visitor_email || 'not provided', phone: l.visitor_phone || 'not provided', service: l.service, urgency: l.urgency, intent: l.intent_summary, action: l.suggested_action })),
     missedVisitors: missed.map(m => ({ name: m.visitor_name, email: m.visitor_email || 'not provided', time: m.timestamp })),
     activeVisitors: active.map(a => ({ name: a.visitor_name, time: a.timestamp }))
@@ -40,9 +71,8 @@ async function getSmartReply(userMsg, chats) {
     const resp = await axios.post('https://api.openai.com/v1/chat/completions', {
       model: 'gpt-4o-mini',
       messages: [{ role: 'system', content: systemPrompt }, { role: 'user', content: userMsg }],
-      max_tokens: 600,
-      temperature: 0.7
-    }, { headers: { 'Authorization': 'Bearer ' + OPENAI_API_KEY, 'Content-Type': 'application/json' } });
+      max_tokens: 600, temperature: 0.7
+    }, { headers: { Authorization: 'Bearer ' + OPENAI_API_KEY, 'Content-Type': 'application/json' } });
     return resp.data.choices[0].message.content.trim();
   } catch(e) {
     console.error('[SmartReply] OpenAI error:', e.message);
@@ -53,7 +83,7 @@ async function getSmartReply(userMsg, chats) {
 app.post('/webhook', async (req, res) => {
   try {
     const body = req.body;
-    console.log('[Webhook] Received event:', body.event_type || body.chat_event_type || 'unknown', JSON.stringify(body).substring(0, 300));
+    console.log('[Webhook] Event:', body.event_type || body.chat_event_type || 'unknown', JSON.stringify(body).substring(0, 300));
     const eventType = body.event_type || body.chat_event_type || '';
     let chatStatus = 'unknown';
     if (eventType.includes('created')) chatStatus = 'active';
@@ -64,8 +94,15 @@ app.post('/webhook', async (req, res) => {
     const visitorPhone = (body.visitor && body.visitor.phone) ? body.visitor.phone : (body.visitor_phone || '');
     const chatId = (body.conversation && body.conversation.id) ? body.conversation.id : (body.chat_id || body.id || '');
     const startTime = (body.conversation && body.conversation.started_time) ? body.conversation.started_time : (body.start_time || new Date().toISOString());
+
     if (chatStatus === 'active') {
       addChat({ chatId, visitor_name: visitorName, visitor_email: visitorEmail, visitor_phone: visitorPhone, status: 'active', is_lead: false, service: 'unknown', urgency: 'unknown', intent_summary: 'Chat just started', suggested_action: 'Monitor conversation', start_time: startTime });
+      if (visitorPhone) {
+        console.log('[WhatsApp] New lead - sending WhatsApp to:', visitorPhone);
+        await sendWhatsAppMessage(visitorPhone, visitorName);
+      } else {
+        console.log('[WhatsApp] New lead - no phone number, skipping WhatsApp');
+      }
       return res.status(200).json({ success: true, status: 'active' });
     }
     if (chatStatus === 'missed') {
@@ -120,27 +157,24 @@ app.post('/slack/events', async (req, res) => {
           replyText = smartReply;
         } else {
           const summary = buildDailySummary();
-          replyText = summary.text;
+          replyText = summary || 'No data available yet for today.';
         }
-        try {
-          await axios.post('https://slack.com/api/chat.postMessage', {
-            channel: channel,
-            text: replyText,
-            thread_ts: event.thread_ts || event.ts
-          }, { headers: { 'Authorization': 'Bearer ' + botToken, 'Content-Type': 'application/json' } });
-        } catch (e) { console.error('[Slack Events] Reply failed:', e.message); }
-        return;
+        await axios.post('https://slack.com/api/chat.postMessage', {
+          channel: channel, text: replyText
+        }, { headers: { Authorization: 'Bearer ' + botToken, 'Content-Type': 'application/json' } });
+      } else {
+        res.status(200).send();
       }
+    } else {
+      res.status(200).send();
     }
-    res.status(200).send();
   } catch (err) {
     console.error('[Slack Events] Error:', err.message);
-    res.status(200).send();
+    res.status(500).json({ error: err.message });
   }
 });
 
-startDailyCron();
-
 app.listen(PORT, () => {
-  console.log('MYL Lead Qualifier Bot running on port ' + PORT);
+  console.log('MYL Lead Qualifier Bot running on port', PORT);
+  startDailyCron();
 });
